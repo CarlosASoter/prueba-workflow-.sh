@@ -33,42 +33,44 @@ jobs:
             git add .
             git commit -m "style(sh): auto-formato aplicado con shfmt"
             git push
-            echo "estilo_arreglado=true" >> $GITHUB_OUTPUT
           fi
 
-      # --- PASO 2: SEGURIDAD (LOGS DETALLADOS + PARCHES) ---
+      # --- PASO 2: SEGURIDAD CON REPORTE VISUAL ---
       - name: Auditoría de Seguridad con ShellCheck
         id: audit_step
         run: |
           mkdir -p parches_seguridad
           HUBO_ERRORES=false
+          
+          # Crear encabezado del resumen en GitHub
+          echo "### 🛡️ Reporte de Auditoría Shell" >> $GITHUB_STEP_SUMMARY
+          echo "| Archivo | Estado | Parche Auto |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
 
           while IFS= read -r archivo; do
-            echo ""
-            echo "=========================================================="
-            echo "📄 ARCHIVO: $archivo"
-            echo "=========================================================="
+            nombre_archivo=$(basename "$archivo")
+            ruta_parche="parches_seguridad/${nombre_archivo}.patch"
             
-            # 1. Ejecutar reporte detallado para el log
-            if ! shellcheck "$archivo"; then
+            # Ejecutar shellcheck (salida silenciosa para el log limpio)
+            if shellcheck "$archivo" > /dev/null 2>&1; then
+              echo "| $archivo | ✅ Limpio | - |" >> $GITHUB_STEP_SUMMARY
+            else
               HUBO_ERRORES=true
-              echo "❌ Se encontraron problemas en $archivo"
               
-              # 2. Intentar generar el parche
-              nombre_archivo=$(basename "$archivo")
-              ruta_parche="parches_seguridad/${nombre_archivo}.patch"
-              
-              # Capturamos si shellcheck detecta algo "parcheable"
+              # Intentar generar parche
               if shellcheck -f diff "$archivo" > "$ruta_parche" 2>/dev/null && [ -s "$ruta_parche" ]; then
-                echo "🎁 [PARCHE DISPONIBLE]: Se generó una propuesta automática para este archivo."
+                PARCHE_MSG="🎁 Disponible"
               else
                 rm -f "$ruta_parche"
-                echo "⚠️  [AVISO]: No hay parche automático disponible. Revisa los logs arriba para corregir manualmente."
+                PARCHE_MSG="⚠️ Manual"
               fi
-            else
-              echo "✅ Sin problemas detectados."
+              
+              echo "| $archivo | ❌ Errores | $PARCHE_MSG |" >> $GITHUB_STEP_SUMMARY
+              
+              # Mostrar el error detallado en el log por si quieren verlo ahí
+              echo "::error file=$archivo::Se detectaron errores. Revisa el resumen del Job."
+              shellcheck "$archivo"
             fi
-            echo "----------------------------------------------------------"
 
           done < <(find . -type f -name "*.sh")
 
@@ -88,6 +90,5 @@ jobs:
       - name: Verificar Resultado Final
         if: steps.audit_step.outputs.status == 'fail'
         run: |
-          echo "⛔ Error: La auditoría falló."
-          echo "Consulta los logs arriba para ver los errores de cada archivo."
+          echo "❌ Error: La auditoría falló."
           exit 1
