@@ -1,0 +1,93 @@
+name: Auditoría y Auto-Formato Shell
+
+on: [push, pull_request]
+
+# Permisos necesarios para que el robot pueda subir los cambios de estilo
+permissions:
+  contents: write
+
+jobs:
+  shell-quality:
+    name: Estilo (Auto) y Seguridad (Manual)
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }} # Importante para editar la rama correcta
+
+      - name: Instalar ShellCheck y Shfmt
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck shfmt
+
+      # --- PASO 1: ESTILO (SE APLICA SOLO) ---
+      - name: Aplicar shfmt y Auto-Commit
+        id: format_step
+        run: |
+          # Formatear todos los archivos .sh físicamente
+          find . -type f -name "*.sh" -exec shfmt -w {} +
+
+          # Configurar identidad del robot
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "actions@github.com"
+
+          # Si hay cambios, hacer commit y push
+          if ! git diff --exit-code; then
+            git add .
+            git commit -m "style(sh): auto-formato aplicado con shfmt"
+            git push
+            echo "estilo_arreglado=true" >> $GITHUB_OUTPUT
+          fi
+
+      # --- PASO 2: SEGURIDAD (GENERA PARCHES) ---
+      - name: Auditoría de Seguridad con ShellCheck
+        id: audit_step
+        run: |
+          mkdir -p parches_seguridad
+          HAY_ERRORES=false
+
+          # Buscamos cada archivo .sh
+          while IFS= read -r archivo; do
+            nombre_archivo=$(basename "$archivo")
+            ruta_parche="parches_seguridad/${nombre_archivo}.patch"
+
+            # 1. Generar el parche de seguridad
+            shellcheck -f diff "$archivo" > "$ruta_parche" || true
+
+            # CONDICIONAL: ¿El parche tiene contenido? (-s)
+            if [ -s "$ruta_parche" ]; then
+              echo "⚠️ Error de seguridad detectado en: $archivo"
+              HAY_ERRORES=true
+            else
+              # Si está vacío, no nos sirve, lo borramos
+              rm "$ruta_parche"
+            fi
+
+            # 2. Mostrar errores de lógica (los que no tienen parche) en el log
+            shellcheck "$archivo" || true
+
+          done < <(find . -type f -name "*.sh")
+
+          # Si detectamos errores, avisamos al siguiente paso
+          if [ "$HAY_ERRORES" = true ]; then
+            echo "status=error_seguridad" >> $GITHUB_OUTPUT
+          fi
+
+      # --- PASO 3: SUBIDA DE RESULTADOS ---
+      - name: Subir Parches como Artefactos
+        if: steps.audit_step.outputs.status == 'error_seguridad'
+        uses: actions/upload-artifact@v4
+        with:
+          name: parches-de-seguridad
+          path: parches_seguridad/*.patch
+          retention-days: 5
+
+      - name: Verificar Resultado Final
+        if: steps.audit_step.outputs.status == 'error_seguridad'
+        run: |
+          echo "✅ El estilo se arregló automáticamente."
+          echo "❌ Pero ShellCheck encontró problemas de seguridad/lógica."
+          echo "Descarga los parches en la pestaña 'Actions' para corregirlos."
+          exit 1
