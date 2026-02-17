@@ -2,7 +2,6 @@ name: Auditoría y Auto-Formato Shell
 
 on: [push, pull_request]
 
-# Permisos necesarios para que el robot pueda subir los cambios de estilo
 permissions:
   contents: write
 
@@ -15,25 +14,21 @@ jobs:
       - name: Checkout del código
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.head_ref }} # Importante para editar la rama correcta
+          ref: ${{ github.head_ref }}
 
       - name: Instalar ShellCheck y Shfmt
         run: |
           sudo apt-get update
           sudo apt-get install -y shellcheck shfmt
 
-      # --- PASO 1: ESTILO (SE APLICA SOLO) ---
+      # --- PASO 1: ESTILO (Auto-Commit) ---
       - name: Aplicar shfmt y Auto-Commit
         id: format_step
         run: |
-          # Formatear todos los archivos .sh físicamente
           find . -type f -name "*.sh" -exec shfmt -w {} +
-
-          # Configurar identidad del robot
           git config --global user.name "GitHub Actions Bot"
           git config --global user.email "actions@github.com"
 
-          # Si hay cambios, hacer commit y push
           if ! git diff --exit-code; then
             git add .
             git commit -m "style(sh): auto-formato aplicado con shfmt"
@@ -41,7 +36,7 @@ jobs:
             echo "estilo_arreglado=true" >> $GITHUB_OUTPUT
           fi
 
-      # --- PASO 2: SEGURIDAD (REPORTE + PARCHES) ---
+      # --- PASO 2: SEGURIDAD (LOGS DETALLADOS + PARCHES) ---
       - name: Auditoría de Seguridad con ShellCheck
         id: audit_step
         run: |
@@ -49,30 +44,39 @@ jobs:
           HUBO_ERRORES=false
 
           while IFS= read -r archivo; do
-            echo "🔍 Analizando exhaustivamente: $archivo"
+            echo ""
+            echo "=========================================================="
+            echo "📄 ARCHIVO: $archivo"
+            echo "=========================================================="
             
-            # 1. EL REPORTE (Humano): Muestra TODO en el log
+            # 1. Ejecutar reporte detallado para el log
             if ! shellcheck "$archivo"; then
               HUBO_ERRORES=true
+              echo "❌ Se encontraron problemas en $archivo"
+              
+              # 2. Intentar generar el parche
+              nombre_archivo=$(basename "$archivo")
+              ruta_parche="parches_seguridad/${nombre_archivo}.patch"
+              
+              # Capturamos si shellcheck detecta algo "parcheable"
+              if shellcheck -f diff "$archivo" > "$ruta_parche" 2>/dev/null && [ -s "$ruta_parche" ]; then
+                echo "🎁 [PARCHE DISPONIBLE]: Se generó una propuesta automática para este archivo."
+              else
+                rm -f "$ruta_parche"
+                echo "⚠️  [AVISO]: No hay parche automático disponible. Revisa los logs arriba para corregir manualmente."
+              fi
+            else
+              echo "✅ Sin problemas detectados."
             fi
-
-            # 2. EL PARCHE (Robot): Intenta generar correcciones
-            nombre_archivo=$(basename "$archivo")
-            shellcheck -f diff "$archivo" > "parches_seguridad/${nombre_archivo}.patch" || true
-            
-            # Si el parche está vacío, lo borramos
-            if [ ! -s "parches_seguridad/${nombre_archivo}.patch" ]; then
-              rm "parches_seguridad/${nombre_archivo}.patch"
-            fi
+            echo "----------------------------------------------------------"
 
           done < <(find . -type f -name "*.sh")
 
-          # Si hubo errores, marcamos el status como 'fail'
           if [ "$HUBO_ERRORES" = true ]; then
             echo "status=fail" >> $GITHUB_OUTPUT
           fi
 
-      # --- PASO 3: SUBIDA DE RESULTADOS ---
+      # --- PASO 3: RESULTADOS ---
       - name: Subir Parches como Artefactos
         if: steps.audit_step.outputs.status == 'fail'
         uses: actions/upload-artifact@v4
@@ -84,7 +88,6 @@ jobs:
       - name: Verificar Resultado Final
         if: steps.audit_step.outputs.status == 'fail'
         run: |
-          echo "✅ El estilo se arregló automáticamente (si era necesario)."
-          echo "❌ Pero ShellCheck encontró problemas de seguridad o lógica."
-          echo "Revisa los logs arriba y descarga los parches si están disponibles."
+          echo "⛔ Error: La auditoría falló."
+          echo "Consulta los logs arriba para ver los errores de cada archivo."
           exit 1
