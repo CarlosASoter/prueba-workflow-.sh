@@ -38,7 +38,7 @@ jobs:
             echo "estilo_cambiado=false" >> $GITHUB_OUTPUT
           fi
 
-      # --- PASO 2: SEGURIDAD (LOGS Y RECOLECCIÓN) ---
+      # --- PASO 2: SEGURIDAD (GENERACIÓN DE PARCHES GARANTIZADA) ---
       - name: Auditoría de Seguridad con ShellCheck
         id: audit_step
         run: |
@@ -48,25 +48,29 @@ jobs:
           LISTA_SIN_PARCHE=""
 
           while IFS= read -r archivo; do
-            # Ejecutar shellcheck
+            # 1. Ejecutamos ShellCheck normal para ver si hay errores
             if ! shellcheck "$archivo"; then
               HUBO_ERRORES=true
               
-              # Intentar generar parche
               nombre_archivo=$(basename "$archivo")
               ruta_parche="parches_seguridad/${nombre_archivo}.patch"
               
-              if shellcheck -f diff "$archivo" > "$ruta_parche" 2>/dev/null && [ -s "$ruta_parche" ]; then
+              # 2. Intentamos generar el parche. 
+              # Forzamos la creación del archivo e ignoramos el exit code de shellcheck
+              shellcheck -f diff "$archivo" > "$ruta_parche" 2>/dev/null || true
+              
+              # 3. COMPROBACIÓN CRÍTICA: ¿El parche tiene contenido real?
+              if [ -s "$ruta_parche" ]; then
                 HUBO_PARCHES=true
+                echo "✅ Parche generado para $archivo"
               else
                 rm -f "$ruta_parche"
-                # Si hay error pero no hay parche, lo guardamos para el reporte final
                 LISTA_SIN_PARCHE="$LISTA_SIN_PARCHE $archivo"
+                echo "⚠️ No se pudo generar parche automático para $archivo"
               fi
             fi
           done < <(find . -type f -name "*.sh")
 
-          # Exportar variables para el paso final
           echo "hubo_errores=$HUBO_ERRORES" >> $GITHUB_OUTPUT
           echo "hubo_parches=$HUBO_PARCHES" >> $GITHUB_OUTPUT
           echo "lista_sin_parche=$LISTA_SIN_PARCHE" >> $GITHUB_OUTPUT
@@ -79,34 +83,28 @@ jobs:
           name: parches-de-seguridad
           path: parches_seguridad/*.patch
 
-      # --- PASO 4: REPORTE FINAL DETALLADO ---
+      # --- PASO 4: REPORTE FINAL ---
       - name: Verificar Resultado Final
         run: |
           echo "=========================================================="
           
-          # Reporte de Estilo
           if [ "${{ steps.format_step.outputs.estilo_cambiado }}" == "true" ]; then
             echo "✅ El estilo se arregló automáticamente."
           else
             echo "✅ El estilo ya era correcto, no hubo cambios."
           fi
 
-          # Reporte de Seguridad General
           if [ "${{ steps.audit_step.outputs.hubo_errores }}" == "true" ]; then
             echo "❌ ShellCheck encontró problemas de seguridad/lógica."
             
-            # Aviso de Parches
             if [ "${{ steps.audit_step.outputs.hubo_parches }}" == "true" ]; then
               echo "📩 Descarga los parches en la pestaña 'Actions' para corregirlos automáticamente."
-            else
-              echo "⚠️ No se crearon parches automáticos (los errores requieren cambios manuales)."
             fi
 
-            # Listado de archivos con errores sin parche y sus logs
             ARCHIVOS_MANUALES="${{ steps.audit_step.outputs.lista_sin_parche }}"
             if [ ! -z "$ARCHIVOS_MANUALES" ]; then
               echo ""
-              echo "Archivos que no se crearon parches pero que si se detectaron errores:"
+              echo "Archivos con errores que requieren intervención MANUAL (sin parche):"
               for archivo in $ARCHIVOS_MANUALES; do
                 echo "----------------------------------------------------------"
                 echo "📄 ARCHIVO: $archivo"
