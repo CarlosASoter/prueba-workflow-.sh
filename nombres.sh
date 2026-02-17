@@ -7,5 +7,5 @@ echo "Bienvenido, $USUARIO_LOGADO"
 
 # Comparación constante (SC2050)
 if [ "pro" == "pro" ]; then
-    echo "Modo producción"
+	echo "Modo producción"
 fi
