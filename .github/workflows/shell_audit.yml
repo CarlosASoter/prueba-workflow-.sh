@@ -41,43 +41,40 @@ jobs:
             echo "estilo_arreglado=true" >> $GITHUB_OUTPUT
           fi
 
-      # --- PASO 2: SEGURIDAD (GENERA PARCHES) ---
+      # --- PASO 2: SEGURIDAD (REPORTE + PARCHES) ---
       - name: Auditoría de Seguridad con ShellCheck
         id: audit_step
         run: |
           mkdir -p parches_seguridad
-          HAY_ERRORES=false
+          HUBO_ERRORES=false
 
-          # Buscamos cada archivo .sh
           while IFS= read -r archivo; do
-            nombre_archivo=$(basename "$archivo")
-            ruta_parche="parches_seguridad/${nombre_archivo}.patch"
-
-            # 1. Generar el parche de seguridad
-            shellcheck -f diff "$archivo" > "$ruta_parche" || true
-
-            # CONDICIONAL: ¿El parche tiene contenido? (-s)
-            if [ -s "$ruta_parche" ]; then
-              echo "⚠️ Error de seguridad detectado en: $archivo"
-              HAY_ERRORES=true
-            else
-              # Si está vacío, no nos sirve, lo borramos
-              rm "$ruta_parche"
+            echo "🔍 Analizando exhaustivamente: $archivo"
+            
+            # 1. EL REPORTE (Humano): Muestra TODO en el log
+            if ! shellcheck "$archivo"; then
+              HUBO_ERRORES=true
             fi
 
-            # 2. Mostrar errores de lógica (los que no tienen parche) en el log
-            shellcheck "$archivo" || true
+            # 2. EL PARCHE (Robot): Intenta generar correcciones
+            nombre_archivo=$(basename "$archivo")
+            shellcheck -f diff "$archivo" > "parches_seguridad/${nombre_archivo}.patch" || true
+            
+            # Si el parche está vacío, lo borramos
+            if [ ! -s "parches_seguridad/${nombre_archivo}.patch" ]; then
+              rm "parches_seguridad/${nombre_archivo}.patch"
+            fi
 
           done < <(find . -type f -name "*.sh")
 
-          # Si detectamos errores, avisamos al siguiente paso
-          if [ "$HAY_ERRORES" = true ]; then
-            echo "status=error_seguridad" >> $GITHUB_OUTPUT
+          # Si hubo errores, marcamos el status como 'fail'
+          if [ "$HUBO_ERRORES" = true ]; then
+            echo "status=fail" >> $GITHUB_OUTPUT
           fi
 
       # --- PASO 3: SUBIDA DE RESULTADOS ---
       - name: Subir Parches como Artefactos
-        if: steps.audit_step.outputs.status == 'error_seguridad'
+        if: steps.audit_step.outputs.status == 'fail'
         uses: actions/upload-artifact@v4
         with:
           name: parches-de-seguridad
@@ -85,9 +82,9 @@ jobs:
           retention-days: 5
 
       - name: Verificar Resultado Final
-        if: steps.audit_step.outputs.status == 'error_seguridad'
+        if: steps.audit_step.outputs.status == 'fail'
         run: |
-          echo "✅ El estilo se arregló automáticamente."
-          echo "❌ Pero ShellCheck encontró problemas de seguridad/lógica."
-          echo "Descarga los parches en la pestaña 'Actions' para corregirlos."
+          echo "✅ El estilo se arregló automáticamente (si era necesario)."
+          echo "❌ Pero ShellCheck encontró problemas de seguridad o lógica."
+          echo "Revisa los logs arriba y descarga los parches si están disponibles."
           exit 1
