@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-ping    -c    4     google.com
+ping -c 4 google.com

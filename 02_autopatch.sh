@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 
-user=  $USER
-today=  `date`
+user= $USER
+today= $(date)
 
-echo  Hola  $user
+echo Hola $user
 
 if [ $user = root ]; then
-echo  Eres root
+	echo Eres root
 fi
 
 read -p "Comando: " cmd
-eval  $cmd
+eval $cmd
